@@ -10,7 +10,7 @@ from threading import Lock
 # 1️⃣ GitHub Tokens
 # =========================
 GITHUB_TOKENS = [
-XXXX
+ XXXXXX
 ]
 token_cycle = itertools.cycle(GITHUB_TOKENS)
 
@@ -24,7 +24,7 @@ def get_headers():
 write_lock = Lock()
 
 # =========================
-# 2️⃣ GraphQL 查询 PR
+# 2️⃣ GraphQL 查询 PR（含 labels）
 # =========================
 def run_graphql(query, variables=None, max_retries=5):
     url = "https://api.github.com/graphql"
@@ -47,11 +47,10 @@ def run_graphql(query, variables=None, max_retries=5):
     return None
 
 # =========================
-# 3️⃣ 抓取 PR 信息（含 Assignee）
+# 3️⃣ 抓取 PR 信息（含 Assignee + Reviewers + Labels）
 # =========================
 def stream_pull_requests(owner, repo, output_csv):
     cursor = None
-    first_pr_printed = False
 
     query = """
     query($owner: String!, $name: String!, $cursor: String) {
@@ -72,6 +71,7 @@ def stream_pull_requests(owner, repo, output_csv):
               commits { totalCount }
               reviews(first: 50) { nodes { author { login } state } }
               assignees(first: 50) { nodes { login } }
+              labels(first: 50) { nodes { name } }
             }
           }
         }
@@ -97,6 +97,8 @@ def stream_pull_requests(owner, repo, output_csv):
             pr = edge["node"]
             reviewers = [r["author"]["login"] for r in pr["reviews"]["nodes"] if r["author"]]
             assignees = [a["login"] for a in pr["assignees"]["nodes"]]
+            labels = [l["name"] for l in pr["labels"]["nodes"]]
+
             row = {
                 "owner": owner,
                 "repo": repo,
@@ -111,14 +113,10 @@ def stream_pull_requests(owner, repo, output_csv):
                 "changed_files": pr["changedFiles"],
                 "commits_count": pr["commits"]["totalCount"],
                 "reviewers": ",".join(reviewers),
-                "assignees": ",".join(assignees)
+                "assignees": ",".join(assignees),
+                "labels": ",".join(labels)
             }
             rows.append(row)
-
-            #if not first_pr_printed:
-               # print(f"📝 {owner}/{repo} 第一条 PR:")
-                #print(row)
-                #first_pr_printed = True
 
         if rows:
             with write_lock:
@@ -134,9 +132,8 @@ def stream_pull_requests(owner, repo, output_csv):
 # =========================
 # 4️⃣ 项目列表
 # =========================
-
 INPUT_CSV = "/Users/chenzhenzhen/Desktop/4.开源研究想法/202501开源项目CLA布局/项目层面研究/组织项目/组织项目-历史数据/ORG_projects_basic_summary_correct.csv"
-OUTPUT_CSV = "/Users/chenzhenzhen/Desktop/4.开源研究想法/202501开源项目CLA布局/项目层面研究/组织项目/大语言模型文本数据/ORG_projects_PRs_metadata_with_assignees.csv"
+OUTPUT_CSV = "/Users/chenzhenzhen/Desktop/4.开源研究想法/202501开源项目CLA布局/项目层面研究/组织项目/大语言模型文本数据/ORG_projects_PRs_text_with_assignees.csv"
 
 df_projects = pd.read_csv(INPUT_CSV)
 projects = list(zip(df_projects["Organization Name"], df_projects["Repository Name"]))
@@ -147,7 +144,7 @@ if not os.path.exists(OUTPUT_CSV):
         "owner","repo","pr_number","title","body",
         "created_at","merged_at","closed_at",
         "additions","deletions","changed_files","commits_count",
-        "reviewers","assignees"
+        "reviewers","assignees","labels"
     ]).to_csv(OUTPUT_CSV, index=False)
 
 # =========================
@@ -161,5 +158,6 @@ with ThreadPoolExecutor(max_workers=5) as pool:
     futures = [pool.submit(process_project, o, r) for o, r in projects]
     for f in as_completed(futures):
         f.result()
+
 
 print("✅ 所有项目 PR 元数据 + 标题 + 内容 + reviewer + assignee 抓取完成")
